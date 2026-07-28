@@ -59,6 +59,7 @@ El catálogo arranca vacío:
 | `post`    | Parte del tracker: **poste** (soporte hincado). |
 | `moving`  | Parte del tracker: **parte móvil** (eje/torque tube que rota). |
 | `panel`   | Parte del tracker: **panel** fotovoltaico. |
+| `tracker` | **Assieme completo del tracker** (postes + tubo de torsión + rodamientos + rieles… en un solo `.glb` exportado de CAD). Aparece como opción elegible en **Officina tracker → Assieme completo**, junto a "Importa file…" — no en la galería de Oggetti 3D (esa es para props decorativos, ver `Risorse 3D` en las Releases). |
 
 Los modelos se normalizan solos (tamaño real creíble por tipo, base apoyada en
 el suelo), así que cualquier `.glb` razonable de Sketchfab/Poly funciona.

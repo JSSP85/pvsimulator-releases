@@ -1,1 +1,5 @@
-{ "items": [] }
+{
+  "items": [
+    { "file": "Nuovo.2P.completo.rev2.glb", "name": "Nuovo 2P completo rev2", "type": "tracker", "scale": 1 }
+  ]
+}

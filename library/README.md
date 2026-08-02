@@ -64,3 +64,28 @@ El catálogo arranca vacío:
 Los modelos se normalizan solos (tamaño real creíble por tipo, base apoyada en
 el suelo), así que cualquier `.glb` razonable de Sketchfab/Poly funciona.
 `scale` sólo hace falta para retocar casos concretos.
+
+## Vegetación del render fotográfico
+
+Dos archivos de esta carpeta **no** están en `catalog.json` y no aparecen en la
+galería, a propósito: los consume el **Render fotográfico** de la app (pestaña
+Home → Immagine) y no tiene sentido colocarlos a mano, uno por uno, como si
+fueran props.
+
+| Archivo | Qué es | Cómo lo usa el render |
+|---------|--------|-----------------------|
+| `realtime_grass.glb` | Parche de césped en tarjetas alfa (~37 triángulos/m²) | Se esparce con solape y giro aleatorio alrededor del punto que mira la cámara, con la altura reducida a un tercio (césped segado bajo las filas) |
+| `daisy_models_pack_realistic_optimized.glb` | 27 variantes de planta con flor en un solo archivo | Se separa por malla y se siembra en una franja bajo cada fila de trackers, **encima** del césped |
+
+La app los busca **por nombre**, así que renombrarlos los desactiva. Para probar
+un reemplazo sin tocar el repo, en la consola del navegador:
+
+```js
+localStorage.setItem('tm.veg.grass',   'mi-cesped.glb');
+localStorage.setItem('tm.veg.flowers', 'mis-flores.glb');
+```
+
+`simple_grass_chunks.glb` está aquí pero **no se usa**: se exportó sin las
+texturas de color base (sólo normales y rugosidad), así que se renderiza blanco,
+y a ~7500 triángulos/m² es unas doscientas veces más caro que el otro. Sirve si
+algún día se re-exporta con sus texturas.

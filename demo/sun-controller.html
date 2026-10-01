@@ -90,6 +90,8 @@ const L = ['es', 'en', 'de', 'it'];
 const T = {
   connecting: ['Conectando…', 'Connecting…', 'Verbinde…', 'Connessione…'],
   linked: ['Conectado', 'Connected', 'Verbunden', 'Connesso'],
+  direct: ['directo', 'direct', 'direkt', 'diretto'],
+  cloud: ['vía nube', 'via cloud', 'über Cloud', 'via cloud'],
   offline: ['Sin conexión', 'Offline', 'Offline', 'Offline'],
   east: ['E', 'E', 'O', 'E'], west: ['O', 'W', 'W', 'O'],
   tConnecting: ['Conectando con el tótem', 'Connecting to the totem', 'Verbindung zum Totem', 'Connessione al totem'],
@@ -131,11 +133,43 @@ function card(title, body, cta = null, note = '') {
   $('#note').textContent = note;
 }
 const vibrate = (ms) => { try { navigator.vibrate && navigator.vibrate(ms); } catch (e) { /* no */ } };
-function setLink(state) { const p = $('#link'); p.className = 'pill ' + (state === 'on' ? 'on' : state === 'warn' ? 'warn' : ''); p.textContent = t(state === 'on' ? 'linked' : state === 'warn' ? 'connecting' : 'offline'); }
+function setLink(state) {
+  const p = $('#link'); p.className = 'pill ' + (state === 'on' ? 'on' : state === 'warn' ? 'warn' : '');
+  p.textContent = t(state === 'on' ? 'linked' : state === 'warn' ? 'connecting' : 'offline')
+    + (state === 'on' ? ` · ${typeof direct === 'function' && direct() ? t('direct') : t('cloud')}${G.rtt ? ` · ${G.rtt} ms` : ''}` : '');
+}
 
 // ---- the link ----
 let client = null;
 const send = (m) => { if (client && client.connected) client.publish(UP, JSON.stringify({ ...m, id: ME })); };
+// ---- the direct link ----
+// The broker only introduces the two devices. Once they know each other, the
+// phone opens a WebRTC data channel straight to the totem (unordered, no
+// retransmits: a late tilt is worth nothing, the next one replaces it), the
+// way a video call does. On the same Wi-Fi that is a few milliseconds instead
+// of a round trip through a server abroad. If the networks will not let the
+// two meet, everything keeps going through the broker as before.
+let pc = null, dc = null;
+const direct = () => !!dc && dc.readyState === 'open';
+const sendFast = (m) => { if (direct()) dc.send(JSON.stringify({ ...m, id: ME })); else send(m); };
+const iceDone = (c) => new Promise((r) => {
+  if (c.iceGatheringState === 'complete') { r(); return; }
+  const to = setTimeout(r, 2500);
+  c.addEventListener('icegatheringstatechange', () => { if (c.iceGatheringState === 'complete') { clearTimeout(to); r(); } });
+});
+async function startDirect() {
+  if (pc || typeof RTCPeerConnection === 'undefined') return;
+  try {
+    pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun.cloudflare.com:3478' }] });
+    dc = pc.createDataChannel('tilt', { ordered: false, maxRetransmits: 0 });
+    dc.onopen = () => setLink('on');
+    dc.onclose = () => setLink(client && client.connected ? 'on' : 'off');
+    dc.onmessage = (e) => { let m; try { m = JSON.parse(e.data); } catch (x) { return; } onMsg(m); };
+    await pc.setLocalDescription(await pc.createOffer());
+    await iceDone(pc);
+    send({ t: 'offer', sdp: pc.localDescription.sdp });
+  } catch (e) { pc = null; dc = null; }
+}
 function connect() {
   if (!SID || !KEY) { G.phase = 'nocode'; card(t('tNoCode'), t('bNoCode')); setLink('off'); return; }
   setLink('warn'); card(t('tConnecting'), t('bConnecting'));
@@ -153,7 +187,9 @@ function connect() {
 function onMsg(m) {
   if (m.to !== ME) return;                         // the totem addresses every message to one phone
   G.last = performance.now();
-  if (m.t === 'welcome') { G.phase = 'welcome'; card(t('tWelcome'), t('bWelcome'), t('take')); }
+  if (m.t === 'welcome') { G.phase = 'welcome'; card(t('tWelcome'), t('bWelcome'), t('take')); startDirect(); }
+  if (m.t === 'answer' && pc && !pc.currentRemoteDescription) pc.setRemoteDescription({ type: 'answer', sdp: m.sdp }).catch(() => {});
+  if (m.t === 'pong') { G.rtt = Math.round(performance.now() - m.ts); setLink('on'); }
   if (m.t === 'busy') { G.phase = 'busy'; card(t('tBusy'), t('bBusy')); }
   if (m.t === 'expired') { G.phase = 'expired'; card(t('tExpired'), t('bExpired')); }
   if (m.t === 'count') {
@@ -196,7 +232,14 @@ async function enableSensor() {
 }
 $('#cta').addEventListener('click', async () => {
   if (G.phase !== 'welcome') return;
-  try { screen.orientation && screen.orientation.lock && screen.orientation.lock('portrait').catch(() => {}); } catch (e) { /* optional */ }
+  // Tilting the phone must not turn the page. Android: fullscreen, then lock it
+  // upright (Chrome only allows the lock in fullscreen). iPhone allows neither,
+  // and asks for the motion permission instead: that tap is kept for it.
+  const ios = typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function';
+  if (!ios) {
+    try { await document.documentElement.requestFullscreen({ navigationUI: 'hide' }); } catch (e) { /* not here */ }
+    try { await screen.orientation.lock('portrait-primary'); } catch (e) { /* not here */ }
+  }
   const note = await enableSensor();
   $('#cta').hidden = true; $('#note').textContent = note;
   send({ t: 'ready', src: G.src });
@@ -205,12 +248,18 @@ addEventListener('pointerdown', (e) => touchTo(e.clientX));
 addEventListener('pointermove', (e) => { if (e.buttons || e.pointerType === 'touch') touchTo(e.clientX); });
 function touchTo(x) { if (G.src === 'touch' && G.phase === 'play') G.target = clamp(((x / innerWidth) * 2 - 1) * 1.15, -1, 1) * LIMIT; }
 
-// 20 tilt messages a second while playing
+// The tilt: 60 a second on the direct link, 20 through the cloud.
+let lastSent = 0;
 setInterval(() => {
   if (G.phase !== 'play') return;
+  const now = performance.now();
+  if (!direct() && now - lastSent < 50) return;
+  lastSent = now;
   if (G.src === 'gyro') G.target = clamp((G.raw - G.zero) * DEG, -LIMIT, LIMIT);
-  send({ t: 'a', a: +(G.target / DEG).toFixed(1) });
-}, 50);
+  sendFast({ t: 'a', a: +(G.target / DEG).toFixed(1) });
+}, 16);
+// the round trip, shown in the bar
+setInterval(() => { if (direct()) sendFast({ t: 'ping', ts: performance.now() }); }, 2000);
 // a heartbeat while the visitor reads the instructions, so the totem keeps the
 // session for them; silence for 30 s means the page was closed
 setInterval(() => { if (G.phase === 'welcome' || G.phase === 'count') send({ t: 'hb' }); }, 3000);

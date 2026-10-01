@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Follow the Sun</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<style>
+/* Layout: one portrait screen. The day plays out in a side view of one tracker
+   row (sky, sun arc, the table on its pile); the battery it charges stands at the
+   right edge; the readouts sit above. Overlays for start, countdown and result. */
+:root{
+  --ink:#0b1018;
+  --glass:rgba(10,15,24,.72);
+  --line:rgba(255,255,255,.14);
+  --fg:#eef2f5;
+  --muted:#a9b6c3;
+  --sun:#ffb21a;
+  --sun-ink:#231600;
+  --good:#7be07a;
+  --mid:#ffc84a;
+  --bad:#ff6b5a;
+  --font:"Archivo","Helvetica Neue",Arial,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--ink);color:var(--fg);font-family:var(--font);overflow:hidden;
+  -webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none;touch-action:none}
+[hidden]{display:none!important}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+button:focus-visible{outline:3px solid var(--sun);outline-offset:3px}
+#c{position:fixed;inset:0;width:100%;height:100%;display:block}
+
+/* ---- readouts ---- */
+.hud{position:fixed;left:16px;right:16px;top:calc(env(safe-area-inset-top, 0px) + 14px);display:flex;justify-content:space-between;align-items:flex-start;gap:12px;pointer-events:none}
+.clock{font:600 30px/1 var(--mono);font-variant-numeric:tabular-nums;text-shadow:0 2px 12px rgba(0,0,0,.35)}
+.clock small{display:block;margin-top:6px;font:600 11px/1 var(--font);letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.align{text-align:right}
+.align b{display:block;font:800 44px/0.95 var(--font);font-stretch:118%;font-variant-numeric:tabular-nums;transition:color .2s}
+.align small{font:600 11px/1 var(--font);letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+
+/* ---- the battery ---- */
+.batt{position:fixed;right:16px;top:28%;bottom:24%;width:44px;pointer-events:none;display:flex;flex-direction:column;align-items:center;gap:8px}
+.batt .cap{width:18px;height:6px;border-radius:3px 3px 0 0;background:#c9d2db}
+.batt .body{position:relative;flex:1;width:100%;border:3px solid #c9d2db;border-radius:10px;padding:3px;background:rgba(6,10,16,.55)}
+.batt .fill{position:absolute;left:3px;right:3px;bottom:3px;height:0;border-radius:5px;
+  background:linear-gradient(to top,#2fb36a,#7be07a 70%,#d9ff8a);box-shadow:0 0 18px rgba(123,224,122,.45)}
+.batt .bolt{position:absolute;inset:0;display:grid;place-items:center;color:rgba(255,255,255,.85);font-size:20px}
+.batt .kwh{font:600 13px/1.1 var(--mono);text-align:center;font-variant-numeric:tabular-nums;text-shadow:0 1px 6px rgba(0,0,0,.6)}
+.batt .kwh small{display:block;font:600 9px/1 var(--font);letter-spacing:.12em;color:var(--muted);margin-top:2px}
+
+.hint{position:fixed;left:16px;right:76px;bottom:calc(env(safe-area-inset-bottom, 0px) + 18px);font:600 13px/1.35 var(--font);color:var(--muted);pointer-events:none}
+.hint b{color:var(--fg)}
+
+/* ---- overlays ---- */
+.ov{position:fixed;inset:0;display:flex;flex-direction:column;justify-content:flex-end;padding:24px 20px calc(env(safe-area-inset-bottom, 0px) + 26px);
+  background:linear-gradient(to top,rgba(8,12,19,.96) 0%,rgba(8,12,19,.9) 52%,rgba(8,12,19,.15) 100%)}
+.eyebrow{display:inline-flex;align-items:center;gap:8px;font:700 11px/1 var(--font);letter-spacing:.18em;text-transform:uppercase;color:var(--sun)}
+.eyebrow::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--sun);box-shadow:0 0 10px var(--sun)}
+h1{margin:12px 0 10px;font:800 52px/.92 var(--font);font-stretch:125%;letter-spacing:-.01em;text-wrap:balance}
+.lead{margin:0;font-size:17px;line-height:1.4;color:#cdd6df;max-width:30em}
+.steps{list-style:none;margin:18px 0 0;padding:0;display:grid;gap:10px}
+.steps li{display:grid;grid-template-columns:28px 1fr;gap:8px;font-size:15px;line-height:1.35;color:#cdd6df}
+.steps li span:first-child{font:600 13px/1.5 var(--mono);color:var(--sun)}
+.cta{margin-top:22px;height:62px;border-radius:999px;background:var(--sun);color:var(--sun-ink);font:800 21px/1 var(--font);font-stretch:110%;
+  display:flex;align-items:center;justify-content:center;gap:12px;width:100%;box-shadow:0 10px 30px rgba(255,178,26,.25)}
+.cta.ghost{background:transparent;color:var(--fg);border:2px solid var(--line);box-shadow:none;height:54px;font-size:17px;margin-top:10px}
+.note{margin:12px 0 0;font:500 12px/1.4 var(--mono);color:var(--muted);min-height:1.4em}
+.note.ok{color:var(--good)}
+
+#count{justify-content:center;align-items:center;text-align:center;background:rgba(8,12,19,.55)}
+#count .n{font:800 120px/1 var(--font);font-stretch:125%}
+#count p{margin:8px 0 0;font-size:17px;color:#cdd6df}
+
+#result h1{font-size:44px;margin:10px 0 6px}
+.score{display:flex;align-items:baseline;gap:10px;margin:6px 0 2px}
+.score b{font:800 72px/1 var(--font);font-stretch:118%;font-variant-numeric:tabular-nums}
+.score span{font:600 15px/1.3 var(--font);color:var(--muted)}
+.vs{display:grid;grid-template-columns:1fr auto;gap:6px 14px;margin:14px 0 4px;padding:14px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.vs dt{font-size:14px;color:var(--muted)}
+.vs dd{margin:0;font:600 15px/1.2 var(--mono);text-align:right}
+.chart{margin-top:12px}
+.chart svg{display:block;width:100%;height:auto}
+.legend{display:flex;gap:16px;margin-top:6px;font:600 11px/1 var(--font);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.legend i{display:inline-block;width:14px;height:3px;border-radius:2px;vertical-align:middle;margin-right:6px}
+@media (min-width:700px){ .ov{padding-left:max(20px,calc(50% - 300px));padding-right:max(20px,calc(50% - 300px))} }
+@media (prefers-reduced-motion:reduce){ .align b{transition:none} }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div class="hud" id="hud" hidden>
+  <div class="clock"><span id="clock">05:20</span><small data-t="where"></small></div>
+  <div class="align"><b id="align">—</b><small data-t="alignment"></small></div>
+</div>
+<div class="batt" id="batt" hidden>
+  <div class="cap"></div>
+  <div class="body"><div class="fill" id="fill"></div><div class="bolt">⚡</div></div>
+  <div class="kwh"><span id="kwh">0</span><small>kWh</small></div>
+</div>
+<div class="hint" id="hint" hidden></div>
+
+<section class="ov" id="start">
+  <div class="eyebrow">Intersolar Europe 2027</div>
+  <h1 data-t="title"></h1>
+  <p class="lead" data-t="lead"></p>
+  <ol class="steps">
+    <li><span>1</span><span data-t="s1"></span></li>
+    <li><span>2</span><span data-t="s2"></span></li>
+    <li><span>3</span><span data-t="s3"></span></li>
+  </ol>
+  <button type="button" class="cta" id="go" data-t="play"></button>
+  <p class="note" id="sensor"></p>
+</section>
+
+<section class="ov" id="count" hidden>
+  <div class="n" id="n">3</div>
+  <p data-t="hold"></p>
+</section>
+
+<section class="ov" id="result" hidden>
+  <div class="eyebrow" data-t="dayDone"></div>
+  <h1 id="rank"></h1>
+  <div class="score"><b id="pct">0%</b><span data-t="ofTracker"></span></div>
+  <dl class="vs">
+    <dt data-t="you"></dt><dd id="youKwh"></dd>
+    <dt data-t="ours"></dt><dd id="oursKwh"></dd>
+    <dt data-t="best"></dt><dd id="bestPct"></dd>
+  </dl>
+  <div class="chart" id="chart"></div>
+  <div class="legend"><span><i style="background:#ffb21a"></i><span data-t="lgSun"></span></span><span><i style="background:#7be07a"></i><span data-t="lgYou"></span></span></div>
+  <button type="button" class="cta" id="again" data-t="again"></button>
+</section>
+
+<script>
+// =============================================================================
+// "Follow the sun": the tracker is the visitor's phone. Tilt it left and right
+// and the row turns with it; keep the modules square to the sun from sunrise to
+// sunset and the battery fills. The day is Munich on 21 June, compressed into
+// 45 seconds, with the totem's own NOAA sun. The reference is our tracker on the
+// same day: true tracking (one row, nothing to backtrack from) up to its ±55°
+// stops. Everything runs on the phone; linking it to the totem comes later.
+// =============================================================================
+const DEG = Math.PI / 180;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const smooth = (a, b, x) => { const k = clamp((x - a) / (b - a), 0, 1); return k * k * (3 - 2 * k); };
+const $ = (s) => document.querySelector(s);
+
+// ---- language ----
+const L = ['es', 'en', 'de', 'it'];
+const T = {
+  title: ['Sigue al sol', 'Follow the sun', 'Folge der Sonne', 'Segui il sole'],
+  lead: ['El tracker está en tus manos. Gira el móvil para tener los paneles siempre de cara al sol y llena la batería antes de que se ponga.', 'The tracker is in your hands. Tilt your phone to keep the modules facing the sun and fill the battery before sunset.', 'Der Tracker liegt in deinen Händen. Neige dein Handy, halte die Module zur Sonne und lade die Batterie vor Sonnenuntergang.', "Il tracker è nelle tue mani. Inclina il telefono per tenere i moduli rivolti al sole e riempi la batteria prima del tramonto."],
+  s1: ['Bloquea la rotación de pantalla y sostén el móvil horizontal, con la pantalla hacia arriba.', 'Lock screen rotation and hold the phone level, screen up.', 'Bildschirmdrehung sperren, Handy waagerecht halten, Display nach oben.', 'Blocca la rotazione dello schermo e tieni il telefono orizzontale, schermo in alto.'],
+  s2: ['Inclínalo a izquierda y derecha: el tracker gira igual.', 'Tilt it left and right: the tracker turns with it.', 'Nach links und rechts neigen: der Tracker dreht mit.', 'Inclinalo a sinistra e a destra: il tracker gira con lui.'],
+  s3: ['Cuanto más preciso sigas al sol, más rápido se carga la batería.', 'The more precisely you follow the sun, the faster the battery charges.', 'Je genauer du der Sonne folgst, desto schneller lädt die Batterie.', 'Più segui il sole con precisione, più in fretta si carica la batteria.'],
+  play: ['Jugar', 'Play', 'Spielen', 'Gioca'],
+  hold: ['Sostén el móvil horizontal…', 'Hold the phone level…', 'Handy waagerecht halten…', 'Tieni il telefono orizzontale…'],
+  where: ['Múnich · 21 junio', 'Munich · 21 June', 'München · 21. Juni', 'Monaco · 21 giugno'],
+  alignment: ['Alineación', 'Alignment', 'Ausrichtung', 'Allineamento'],
+  gyroOk: ['Giroscopio activo', 'Motion sensor on', 'Bewegungssensor aktiv', 'Sensore di movimento attivo'],
+  gyroNo: ['Sin giroscopio aquí: desliza el dedo a izquierda y derecha para girar el tracker.', 'No motion sensor here: slide your finger left and right to turn the tracker.', 'Kein Bewegungssensor: Finger nach links und rechts ziehen.', 'Nessun sensore: trascina il dito a sinistra e a destra.'],
+  whyInsecure: ['El navegador bloquea el giroscopio porque la página no es https (abierta desde Archivos). Ábrela desde un link https.', 'The browser blocks the motion sensor because the page is not https (opened from Files). Open it from an https link.', 'Der Browser sperrt den Sensor, weil die Seite nicht über https geöffnet ist. Über einen https-Link öffnen.', "Il browser blocca il sensore perché la pagina non è https (aperta da File). Aprila da un link https."],
+  whyFrame: ['El giroscopio está bloqueado dentro de este visor. Ábrela directamente en el navegador.', 'The motion sensor is blocked inside this viewer. Open the page directly in the browser.', 'Der Sensor ist in dieser Ansicht gesperrt. Seite direkt im Browser öffnen.', 'Il sensore è bloccato in questo visore. Apri la pagina direttamente nel browser.'],
+  gyroDenied: ['Permiso de movimiento denegado: desliza el dedo para girar.', 'Motion permission denied: slide your finger to turn.', 'Bewegung nicht erlaubt: Finger ziehen zum Drehen.', 'Permesso negato: trascina il dito per girare.'],
+  hintGyro: ['<b>Inclina el móvil</b> para seguir al sol', '<b>Tilt your phone</b> to follow the sun', '<b>Handy neigen</b>, um der Sonne zu folgen', '<b>Inclina il telefono</b> per seguire il sole'],
+  hintTouch: ['<b>Desliza el dedo</b> para seguir al sol', '<b>Slide your finger</b> to follow the sun', '<b>Finger ziehen</b>, um der Sonne zu folgen', '<b>Trascina il dito</b> per seguire il sole'],
+  stop: ['Tope ±55°', 'Limit ±55°', 'Anschlag ±55°', 'Fine corsa ±55°'],
+  dayDone: ['Fin del día', 'Day complete', 'Tag vorbei', 'Giornata finita'],
+  ofTracker: ['de lo que produjo nuestro tracker', 'of what our tracker produced', 'von dem, was unser Tracker erzeugt hat', 'di quanto ha prodotto il nostro tracker'],
+  you: ['Tu energía', 'Your energy', 'Deine Energie', 'La tua energia'],
+  ours: ['Nuestro tracker, mismo día', 'Our tracker, same day', 'Unser Tracker, gleicher Tag', 'Il nostro tracker, stesso giorno'],
+  best: ['Tu mejor partida', 'Your best', 'Dein Bestwert', 'Il tuo record'],
+  lgSun: ['Sol', 'Sun', 'Sonne', 'Sole'],
+  lgYou: ['Tu tracker', 'Your tracker', 'Dein Tracker', 'Il tuo tracker'],
+  again: ['Jugar otra vez', 'Play again', 'Nochmal', 'Gioca ancora'],
+  r1: ['¡Nivel tracker!', 'Tracker grade!', 'Tracker-Niveau!', 'Livello tracker!'],
+  r2: ['Muy bien', 'Great tracking', 'Sehr gut', 'Molto bene'],
+  r3: ['Bien', 'Not bad', 'Gut', 'Bene'],
+  r4: ['El sol se te escapa', 'The sun got away', 'Die Sonne ist entwischt', 'Il sole ti è sfuggito'],
+};
+const li = Math.max(0, L.indexOf((navigator.language || 'es').slice(0, 2).toLowerCase()));
+const t = (k) => T[k][li] ?? T[k][0];
+document.documentElement.lang = L[li];
+document.querySelectorAll('[data-t]').forEach((el) => { el.textContent = t(el.dataset.t); });
+
+// ---- the sun (NOAA / Meeus, ported from the simulator via the totem) ----
+function solarPosition(latDeg, dayOfYear, hour, lonDeg, tz) {
+  const JD = 2460676.5 + (dayOfYear - 1) + (hour - tz) / 24, Tc = (JD - 2451545) / 36525;
+  const L0 = ((280.46646 + Tc * (36000.76983 + Tc * 0.0003032)) % 360 + 360) % 360;
+  const M = 357.52911 + Tc * (35999.05029 - 0.0001537 * Tc), Mr = M * DEG;
+  const e = 0.016708634 - Tc * (0.000042037 + 0.0000001267 * Tc);
+  const C = Math.sin(Mr) * (1.914602 - Tc * (0.004817 + 0.000014 * Tc)) + Math.sin(2 * Mr) * (0.019993 - 0.000101 * Tc) + Math.sin(3 * Mr) * 0.000289;
+  const om = (125.04 - 1934.136 * Tc) * DEG, lam = (L0 + C - 0.00569 - 0.00478 * Math.sin(om)) * DEG;
+  const sec = 21.448 - Tc * (46.815 + Tc * (0.00059 - Tc * 0.001813));
+  const eps = (23 + (26 + sec / 60) / 60 + 0.00256 * Math.cos(om)) * DEG;
+  const dec = Math.asin(Math.sin(eps) * Math.sin(lam)), y = Math.tan(eps / 2) ** 2, L0r = L0 * DEG;
+  const eqT = 4 / DEG * (y * Math.sin(2 * L0r) - 2 * e * Math.sin(Mr) + 4 * e * y * Math.sin(Mr) * Math.cos(2 * L0r) - 0.5 * y * y * Math.sin(4 * L0r) - 1.25 * e * e * Math.sin(2 * Mr));
+  const H = ((hour * 60 + eqT + 4 * lonDeg - 60 * tz) / 4 - 180) * DEG, phi = latDeg * DEG;
+  const alt = Math.asin(clamp(Math.sin(phi) * Math.sin(dec) + Math.cos(phi) * Math.cos(dec) * Math.cos(H), -1, 1));
+  let az = Math.atan2(-Math.sin(H), Math.cos(phi) * Math.tan(dec) - Math.sin(phi) * Math.cos(H));
+  if (az < 0) az += 2 * Math.PI;
+  return { alt, az };
+}
+// Munich on the solstice, clock in CEST. `phi` is the sun laid onto the plane the
+// tracker turns in, from the zenith, negative to the east: the angle a tracker
+// has to stand at to face it square on.
+function sunAt(clock) {
+  const { alt, az } = solarPosition(48.137, 172, clock - 1, 11.575, 1);
+  const ca = Math.cos(alt), x = ca * Math.sin(az), yUp = Math.sin(alt);
+  return { altDeg: alt / DEG, phi: Math.atan2(-x, yUp) };
+}
+let RISE = 5, SET = 21.5;
+for (let h = 3; h < 12; h += 0.01) if (sunAt(h).altDeg > 0) { RISE = h; break; }
+for (let h = 22; h > 14; h -= 0.01) if (sunAt(h).altDeg > 0) { SET = h; break; }
+const DUR = 45;                            // seconds of play for the whole day
+const LIMIT = 55 * DEG;                    // the tracker's mechanical stops
+const H0 = RISE - 0.25, H1 = SET + 0.25;
+const DAY_KWH = 236;                       // a 2P row of 56 × 600 W modules on a June day in Munich, roughly
+
+// Power at a given misalignment. Physics alone is a cosine, and a cosine forgives
+// 10° almost entirely, which would make every visitor a winner. The game keeps the
+// shape and sharpens it, so precision is what separates the scores.
+const gain = (err) => Math.pow(Math.max(0, Math.cos(err)), 6);
+const irr = (altDeg) => Math.pow(Math.max(0, Math.sin(altDeg * DEG)), 0.7);
+// Our tracker on the same day: the reference the battery is sized to.
+let REF = 0;
+{
+  const N = 3000;
+  for (let i = 0; i < N; i++) {
+    const s = sunAt(H0 + (H1 - H0) * (i + 0.5) / N);
+    REF += irr(s.altDeg) * gain(Math.abs(s.phi - clamp(s.phi, -LIMIT, LIMIT))) / N;
+  }
+}
+
+// ---- colours of the light (sunPalette in the simulator) ----
+function hsl(h, s, l) { const a = s * Math.min(l, 1 - l), f = (n) => { const k = (n + h * 12) % 12; return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)); }; return [f(0), f(8), f(4)]; }
+const mix = (a, b, k) => a.map((v, i) => v + (b[i] - v) * k);
+const rgb = (c, a = 1) => `rgba(${c.map((v) => Math.round(clamp(v, 0, 1) * 255)).join(',')},${a})`;
+const hex = (h) => [(h >> 16 & 255) / 255, (h >> 8 & 255) / 255, (h & 255) / 255];
+function sunColour(alt) {
+  if (alt <= 0) return hsl(0.06, 0.85, 0.55);
+  if (alt < 6) return hsl(0.06, 0.85, 0.55 + alt / 6 * 0.1);
+  if (alt < 15) { const k = (alt - 6) / 9; return mix(hsl(0.06, 0.85, 0.65), hex(0xfff4d6), k * k * (3 - 2 * k)); }
+  return hex(0xfff4d6);
+}
+function skyColours(alt) {
+  const night = [hex(0x070b16), hex(0x121a2e)];
+  const dawn = [hex(0x26355e), hex(0xf08a4b)];
+  const day = [hex(0x2f6fc4), hex(0xa9d0f2)];
+  if (alt < -4) return night;
+  if (alt < 4) { const k = (alt + 4) / 8; return [mix(night[0], dawn[0], k), mix(night[1], dawn[1], k)]; }
+  const k = smooth(4, 22, alt);
+  return [mix(dawn[0], day[0], k), mix(dawn[1], day[1], k)];
+}
+
+// ---- input: the phone's tilt, or a finger as a fallback ----
+const S = { mode: 'start', angle: 0, target: 0, u: 0, energy: 0, src: 'none', zero: 0, raw: 0, gotSensor: false, atStop: false, trace: [], lastPct: 0 };
+function onTilt(e) {
+  if (e.gamma == null) return;
+  if (!e.motion) S.orientSeen = true;
+  S.gotSensor = true;
+  // gamma: tilt about the phone's long axis, positive with the right edge down.
+  // Right edge down = the row's west edge down = facing west = positive here too.
+  S.raw = e.gamma;
+  if (S.src === 'gyro') S.target = clamp((S.raw - S.zero) * DEG, -LIMIT, LIMIT);
+}
+let fingerX = null;
+addEventListener('pointerdown', (e) => { fingerX = e.clientX; touchTo(e.clientX); });
+addEventListener('pointermove', (e) => { if (fingerX != null || e.pointerType === 'mouse') touchTo(e.clientX); });
+addEventListener('pointerup', () => { fingerX = null; });
+function touchTo(x) {
+  if (S.src !== 'touch' || S.mode !== 'play') return;
+  S.target = clamp(((x / innerWidth) * 2 - 1) * 1.15, -1, 1) * LIMIT;
+}
+addEventListener('keydown', (e) => {
+  if (S.src !== 'touch') return;
+  if (e.key === 'ArrowLeft') S.target = clamp(S.target - 5 * DEG, -LIMIT, LIMIT);
+  if (e.key === 'ArrowRight') S.target = clamp(S.target + 5 * DEG, -LIMIT, LIMIT);
+});
+async function enableSensor() {
+  const note = $('#sensor');
+  try {
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      const r = await DeviceOrientationEvent.requestPermission();      // iPhone: needs this tap
+      if (r !== 'granted') { S.src = 'touch'; note.textContent = t('gyroDenied'); return; }
+    }
+  } catch (e) { /* not iOS, or refused */ }
+  try {
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') await DeviceMotionEvent.requestPermission();
+  } catch (e) { /* not iOS */ }
+  addEventListener('deviceorientation', onTilt);
+  // Some browsers give gravity but not orientation: the same tilt, from the accelerometer.
+  addEventListener('devicemotion', (e) => {
+    const a = e.accelerationIncludingGravity;
+    if (!a || a.x == null || S.orientSeen) return;
+    onTilt({ gamma: Math.atan2(-a.x, Math.hypot(a.y, a.z)) / DEG * (/iPhone|iPad/.test(navigator.userAgent) ? -1 : 1), motion: true });
+  });
+  await new Promise((r) => setTimeout(r, 1200));
+  if (S.gotSensor) { S.src = 'gyro'; note.textContent = '✓ ' + t('gyroOk'); note.className = 'note ok'; return; }
+  S.src = 'touch'; note.className = 'note';
+  const framed = (() => { try { return window.top !== window.self; } catch (e) { return true; } })();
+  note.textContent = !window.isSecureContext ? t('whyInsecure') : framed ? t('whyFrame') : t('gyroNo');
+}
+
+// ---- the game ----
+const vibrate = (ms) => { try { navigator.vibrate && navigator.vibrate(ms); } catch (e) { /* not here */ } };
+$('#go').addEventListener('click', async () => {
+  try { screen.orientation && screen.orientation.lock && screen.orientation.lock('portrait').catch(() => {}); } catch (e) { /* optional */ }
+  if (S.src === 'none') await enableSensor();
+  countdown();
+});
+$('#again').addEventListener('click', countdown);
+function countdown() {
+  $('#start').hidden = true; $('#result').hidden = true; $('#count').hidden = false;
+  Object.assign(S, { mode: 'count', u: 0, energy: 0, angle: -LIMIT, target: -LIMIT, trace: [], lastPct: 0, atStop: false });
+  let n = 3; $('#n').textContent = n;
+  const tick = setInterval(() => {
+    n--;
+    if (n > 0) { $('#n').textContent = n; vibrate(20); return; }
+    clearInterval(tick);
+    S.zero = S.src === 'gyro' ? S.raw : 0;            // "level" is however they hold it now
+    if (S.src === 'gyro') S.target = clamp((S.raw - S.zero) * DEG, -LIMIT, LIMIT);
+    else S.target = 0;
+    $('#count').hidden = true;
+    ['#hud', '#batt', '#hint'].forEach((q) => { $(q).hidden = false; });
+    $('#hint').innerHTML = t(S.src === 'gyro' ? 'hintGyro' : 'hintTouch');
+    vibrate(60);
+    S.mode = 'play';
+  }, 800);
+}
+function finish() {
+  S.mode = 'done';
+  ['#hud', '#batt', '#hint'].forEach((q) => { $(q).hidden = true; });
+  const pct = Math.round(100 * S.energy / REF);
+  let best = 0;
+  try { best = +(localStorage.getItem('sun-game-best') || 0); if (pct > best) { best = pct; localStorage.setItem('sun-game-best', String(pct)); } } catch (e) { best = Math.max(best, pct); }
+  $('#rank').textContent = t(pct >= 95 ? 'r1' : pct >= 85 ? 'r2' : pct >= 70 ? 'r3' : 'r4');
+  $('#pct').textContent = pct + '%';
+  $('#youKwh').textContent = Math.round(DAY_KWH * S.energy / REF) + ' kWh';
+  $('#oursKwh').textContent = DAY_KWH + ' kWh';
+  $('#bestPct').textContent = best + '%';
+  drawChart();
+  $('#result').hidden = false;
+  vibrate([40, 60, 40]);
+}
+// The day as two lines: where the sun was (as a tracker angle) and where you were.
+function drawChart() {
+  const w = 320, h = 120, px = (u) => 8 + u * (w - 16), py = (a) => h / 2 - (a / (90 * DEG)) * (h / 2 - 10);
+  const sunPts = [], youPts = [];
+  for (let i = 0; i <= 120; i++) { const u = i / 120, s = sunAt(H0 + (H1 - H0) * u); if (s.altDeg > -1) sunPts.push(`${px(u).toFixed(1)},${py(s.phi).toFixed(1)}`); }
+  S.trace.forEach(([u, a]) => youPts.push(`${px(u).toFixed(1)},${py(a).toFixed(1)}`));
+  $('#chart').innerHTML = `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Sun and tracker angle over the day">
+    <rect x="8" y="${py(LIMIT)}" width="${w - 16}" height="${py(-LIMIT) - py(LIMIT)}" fill="rgba(255,255,255,.04)"/>
+    <line x1="8" x2="${w - 8}" y1="${h / 2}" y2="${h / 2}" stroke="rgba(255,255,255,.18)" stroke-dasharray="3 4"/>
+    <polyline points="${sunPts.join(' ')}" fill="none" stroke="#ffb21a" stroke-width="2.5" stroke-linejoin="round"/>
+    <polyline points="${youPts.join(' ')}" fill="none" stroke="#7be07a" stroke-width="2.5" stroke-linejoin="round"/>
+    <text x="10" y="${py(LIMIT) - 3}" fill="#a9b6c3" font-size="10" font-family="IBM Plex Mono, monospace">W 55°</text>
+    <text x="10" y="${py(-LIMIT) + 11}" fill="#a9b6c3" font-size="10" font-family="IBM Plex Mono, monospace">E 55°</text>
+  </svg>`;
+}
+
+// ---- drawing ----
+const cv = $('#c'), g = cv.getContext('2d');
+let W = 0, H = 0, DPR = 1;
+function resize() {
+  DPR = Math.min(2, devicePixelRatio || 1); W = innerWidth; H = innerHeight;
+  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  g.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+addEventListener('resize', resize); resize();
+const blades = Array.from({ length: 160 }, () => [Math.random(), Math.random(), 0.6 + Math.random() * 0.8]);
+const sparks = [];
+function frame(now) {
+  requestAnimationFrame(frame);
+  const dt = Math.min(0.05, (now - (frame.last || now)) / 1000); frame.last = now;
+
+  if (S.mode === 'play') {
+    S.u = Math.min(1, S.u + dt / DUR);
+    if (S.u >= 1) finish();
+  } else if (S.mode === 'start') {
+    S.u = (S.u + dt / 60) % 1;                                   // the menu shows the day going by
+  }
+  const hour = H0 + (H1 - H0) * S.u, sun = sunAt(hour);
+  if (S.mode === 'start') S.target = clamp(sun.phi, -LIMIT, LIMIT);   // the attract loop tracks by itself
+  S.angle += (S.target - S.angle) * Math.min(1, dt * 14);            // a little inertia, like steel
+  const stopped = Math.abs(S.angle) > LIMIT - 0.5 * DEG;
+  if (S.mode === 'play' && stopped && !S.atStop) vibrate(25);
+  S.atStop = stopped;
+
+  const err = Math.abs(sun.phi - S.angle), lit = irr(sun.altDeg), k = gain(err);
+  if (S.mode === 'play') {
+    S.energy += lit * k * dt / DUR;
+    if (!S.trace.length || S.u - S.trace[S.trace.length - 1][0] > 0.005) S.trace.push([S.u, S.angle]);
+    const pct = Math.floor(10 * S.energy / REF);
+    if (pct > S.lastPct) { S.lastPct = pct; vibrate(12); }
+    // the readouts
+    const m = Math.round(hour * 60);
+    $('#clock').textContent = `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+    const al = $('#align');
+    if (sun.altDeg <= 0) { al.textContent = '—'; al.style.color = 'var(--muted)'; }
+    else { al.textContent = Math.round(k * 100) + '%'; al.style.color = k > 0.9 ? 'var(--good)' : k > 0.6 ? 'var(--mid)' : 'var(--bad)'; }
+    const f = clamp(S.energy / REF, 0, 1);
+    $('#fill').style.height = `calc(${(f * 100).toFixed(1)}% - ${(6 * f).toFixed(1)}px)`;
+    $('#kwh').textContent = Math.round(DAY_KWH * S.energy / REF);
+  }
+
+  // sky
+  const [top, bot] = skyColours(sun.altDeg), sc = sunColour(sun.altDeg);
+  const gy = H * 0.74;
+  let gr = g.createLinearGradient(0, 0, 0, gy);
+  gr.addColorStop(0, rgb(top)); gr.addColorStop(1, rgb(bot));
+  g.fillStyle = gr; g.fillRect(0, 0, W, gy);
+
+  // the sun's half circle over the row
+  const cx = W * 0.45, py = gy - Math.min(H * 0.16, 150), R = Math.min(W * 0.4, H * 0.33);
+  g.save(); g.setLineDash([5, 7]); g.strokeStyle = 'rgba(255,214,140,.45)'; g.lineWidth = 1.5;
+  g.beginPath(); g.arc(cx, py, R, Math.PI, 2 * Math.PI); g.stroke(); g.restore();
+  const sx = cx + R * Math.sin(sun.phi), sy = py - R * Math.cos(sun.phi);
+  const vis = smooth(-2, 1, sun.altDeg);
+  if (vis > 0) {
+    const low = 1 - smooth(3, 30, sun.altDeg), rr = 70 + 50 * low;
+    gr = g.createRadialGradient(sx, sy, 0, sx, sy, rr);
+    gr.addColorStop(0, rgb(sc, 0.7 * vis)); gr.addColorStop(0.25, rgb(sc, 0.22 * vis)); gr.addColorStop(1, rgb(sc, 0));
+    g.fillStyle = gr; g.fillRect(sx - rr, sy - rr, rr * 2, rr * 2);
+    g.fillStyle = rgb(mix(sc, [1, 1, 1], 0.6 * (1 - low)), vis);
+    g.beginPath(); g.arc(sx, sy, 13 + 4 * low, 0, 7); g.fill();
+  }
+
+  // ground and grass
+  gr = g.createLinearGradient(0, gy, 0, H);
+  const dayK = smooth(-4, 15, sun.altDeg);
+  gr.addColorStop(0, rgb(mix(hex(0x1c2a16), hex(0x4f7a33), dayK))); gr.addColorStop(1, rgb(mix(hex(0x0b120a), hex(0x22381a), dayK)));
+  g.fillStyle = gr; g.fillRect(0, gy, W, H - gy);
+  g.strokeStyle = rgb(mix(hex(0x253a1c), hex(0x6f9a46), dayK), 0.8); g.lineWidth = 1.2;
+  for (const [bx, by, bh] of blades) {
+    const x = bx * W, y = gy + 2 + by * 26;
+    g.beginPath(); g.moveTo(x, y); g.lineTo(x + 2, y - 7 * bh); g.stroke();
+  }
+
+  // the table: a 2P cross-section on its pile, turning about the axis
+  const hw = Math.min(W * 0.3, 170), ca = Math.cos(S.angle), sa = Math.sin(S.angle);
+  const ax = cx, ay = py;
+  const ex = ax - hw * ca, ey = ay - hw * sa, wx = ax + hw * ca, wy = ay + hw * sa;   // east and west edges
+  // shadow on the grass, cast along the sun
+  if (sun.altDeg > 0.5) {
+    const ds = Math.cos(sun.phi), dx = -Math.sin(sun.phi);
+    const proj = (x, y) => x + dx * (gy - y) / Math.max(0.08, ds);
+    g.fillStyle = `rgba(0,0,0,${0.32 * smooth(0, 10, sun.altDeg)})`;
+    g.beginPath(); g.ellipse((proj(ex, ey) + proj(wx, wy)) / 2, gy + 10, Math.abs(proj(wx, wy) - proj(ex, ey)) / 2 + 4, 6, 0, 0, 7); g.fill();
+  }
+  // pile and the motor
+  g.fillStyle = '#8b939c'; g.fillRect(ax - 5, ay, 10, gy - ay + 6);
+  g.fillStyle = '#1c1e22'; g.save(); g.translate(ax + 8, ay + 36); g.rotate(0.35 + S.angle * 0.25); g.fillRect(-4, -26, 9, 40); g.restore();
+  // the ray of light it is catching
+  if (vis > 0) {
+    const col = k > 0.9 ? [0.48, 0.88, 0.48] : k > 0.6 ? [1, 0.78, 0.29] : [1, 0.42, 0.35];
+    gr = g.createLinearGradient(sx, sy, ax, ay);
+    gr.addColorStop(0, rgb(sc, 0.0)); gr.addColorStop(1, rgb(col, 0.55 * vis * Math.max(0.25, k)));
+    g.strokeStyle = gr; g.lineWidth = 3 + 9 * k; g.lineCap = 'round';
+    g.beginPath(); g.moveTo(sx, sy); g.lineTo(ax, ay); g.stroke();
+  }
+  // modules: two portrait panels with a gap, cells in their colour
+  g.save(); g.translate(ax, ay); g.rotate(S.angle);
+  g.fillStyle = '#5b6470'; g.fillRect(-hw * 0.9, 6, hw * 1.8, 7);                  // rails / tube
+  g.fillStyle = '#7e8791'; g.fillRect(-9, 4, 18, 14);
+  for (const side of [-1, 1]) {
+    const x0 = side < 0 ? -hw : 4, w = hw - 4;
+    gr = g.createLinearGradient(0, -6, 0, 6);
+    gr.addColorStop(0, '#2f4f8c'); gr.addColorStop(1, '#12234a');
+    g.fillStyle = gr; g.fillRect(x0, -5, w, 10);
+    g.fillStyle = 'rgba(200,215,240,.25)';
+    for (let i = 1; i < 6; i++) g.fillRect(x0 + (w * i) / 6, -5, 1, 10);
+    g.fillStyle = '#d9dee4'; g.fillRect(x0, -6, w, 1.5);                           // frame edge catching light
+  }
+  // the glint when it is square to the sun
+  if (vis > 0 && k > 0.95) {
+    const gl = (k - 0.95) / 0.05;
+    gr = g.createRadialGradient(0, -6, 0, 0, -6, 36);
+    gr.addColorStop(0, `rgba(255,255,255,${0.9 * gl})`); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = gr; g.fillRect(-40, -46, 80, 80);
+  }
+  g.restore();
+  // the pivot
+  g.fillStyle = '#c9d2db'; g.beginPath(); g.arc(ax, ay, 4, 0, 7); g.fill();
+
+  // energy flying to the battery
+  if (S.mode === 'play' && lit * k > 0.05 && Math.random() < lit * k * 0.9) {
+    const b = $('#batt').getBoundingClientRect();
+    sparks.push({ x: ax, y: ay, tx: b.left + b.width / 2, ty: b.bottom - 40 - (b.height - 60) * clamp(S.energy / REF, 0, 1), k: 0 });
+  }
+  for (let i = sparks.length - 1; i >= 0; i--) {
+    const p = sparks[i]; p.k += dt * 1.6;
+    if (p.k >= 1) { sparks.splice(i, 1); continue; }
+    const e = p.k * p.k, x = p.x + (p.tx - p.x) * e, y = p.y + (p.ty - p.y) * e - Math.sin(p.k * Math.PI) * 40;
+    g.fillStyle = `rgba(217,255,138,${1 - p.k})`; g.beginPath(); g.arc(x, y, 3, 0, 7); g.fill();
+  }
+
+  // the stops
+  if (S.mode === 'play' && S.atStop) {
+    g.font = '700 12px Archivo, Arial, sans-serif'; g.textAlign = 'center'; g.fillStyle = 'rgba(255,255,255,.75)';
+    g.fillText(t('stop'), ax, ay + 44);
+  }
+}
+requestAnimationFrame(frame);
+window.__game = S;
+</script>
+</body>
+</html>

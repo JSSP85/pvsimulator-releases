@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0b1018">
+<title>Sun Tracker Controller</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<style>
+/* Layout: the phone is the controller. While playing it shows only the 2P table
+   seen from above, tilting in perspective as the phone tilts; a slim bar on top
+   carries the link state, the alignment and the charge. Before and after the
+   game, one card at the bottom says what to do next. */
+:root{
+  --ink:#0b1018; --glass:rgba(10,15,24,.78); --line:rgba(255,255,255,.14);
+  --fg:#eef2f5; --muted:#a9b6c3; --sun:#ffb21a; --sun-ink:#231600;
+  --good:#7be07a; --mid:#ffc84a; --bad:#ff6b5a;
+  --font:"Archivo","Helvetica Neue",Arial,sans-serif; --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--ink);color:var(--fg);font-family:var(--font);overflow:hidden;-webkit-font-smoothing:antialiased;
+  -webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none;touch-action:none}
+[hidden]{display:none!important}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+button:focus-visible{outline:3px solid var(--sun);outline-offset:3px}
+#c{position:fixed;inset:0;width:100%;height:100%;display:block}
+.bar{position:fixed;left:12px;right:12px;top:calc(env(safe-area-inset-top, 0px) + 10px);display:flex;align-items:center;gap:10px;
+  padding:10px 14px;border-radius:16px;background:var(--glass);border:1px solid var(--line);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+.pill{display:inline-flex;align-items:center;gap:7px;font:700 11px/1 var(--font);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+.pill::before{content:"";width:8px;height:8px;border-radius:50%;background:currentColor}
+.pill.on{color:var(--good)}
+.pill.warn{color:var(--mid)}
+.bar .sp{flex:1}
+.al{font:800 22px/1 var(--font);font-stretch:112%;font-variant-numeric:tabular-nums;min-width:58px;text-align:right}
+.mini{width:70px;height:12px;border-radius:6px;border:2px solid #c9d2db;padding:1px;flex:none}
+.mini i{display:block;height:100%;width:0;border-radius:3px;background:linear-gradient(90deg,#2fb36a,#9be86f)}
+.ew{position:fixed;top:50%;font:800 15px/1 var(--mono);color:rgba(255,255,255,.55);pointer-events:none}
+.ew.e{left:10px}.ew.w{right:10px}
+.card{position:fixed;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom, 0px) + 14px);padding:22px 20px 20px;border-radius:24px;
+  background:rgba(10,15,24,.92);border:1px solid var(--line);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+.eyebrow{display:inline-flex;align-items:center;gap:8px;font:700 11px/1 var(--font);letter-spacing:.18em;text-transform:uppercase;color:var(--sun)}
+.eyebrow::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--sun);box-shadow:0 0 10px var(--sun)}
+.card h1{margin:10px 0 8px;font:800 34px/.98 var(--font);font-stretch:118%;text-wrap:balance}
+.card p{margin:0;font-size:16px;line-height:1.4;color:#cdd6df}
+.card ol{margin:12px 0 0;padding-left:20px;font-size:15px;line-height:1.45;color:#cdd6df}
+.cta{margin-top:18px;height:58px;width:100%;border-radius:999px;background:var(--sun);color:var(--sun-ink);font:800 19px/1 var(--font);font-stretch:108%}
+.note{margin-top:10px;font:500 12px/1.4 var(--mono);color:var(--muted);min-height:1em}
+.big{font:800 88px/1 var(--font);font-stretch:125%;margin:6px 0 4px}
+.score{font:800 64px/1 var(--font);font-stretch:118%;font-variant-numeric:tabular-nums;margin:8px 0 6px}
+@media (prefers-reduced-motion:reduce){ *{transition:none!important} }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="ew e" data-t="east"></div><div class="ew w" data-t="west"></div>
+<div class="bar">
+  <span class="pill" id="link"></span>
+  <span class="sp"></span>
+  <span class="al" id="al">—</span>
+  <span class="mini" aria-hidden="true"><i id="charge"></i></span>
+</div>
+
+<section class="card" id="card">
+  <div class="eyebrow">Intersolar Europe 2027</div>
+  <h1 id="title"></h1>
+  <div id="body"></div>
+  <button type="button" class="cta" id="cta" hidden></button>
+  <div class="note" id="note"></div>
+</section>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.10.1/mqtt.min.js"></script>
+<script>
+// =============================================================================
+// Phone side of "Follow the sun" on the totem. The QR on the totem opens this
+// page with a session code; the phone joins it over MQTT (a public broker for
+// the demo, our own relay in the real build), streams its tilt and receives the
+// game state back. It never runs the game: the totem does, the phone is the
+// tracker in the visitor's hands.
+// =============================================================================
+const BROKER = 'wss://public.cloud.shiftr.io';
+const DEG = Math.PI / 180, LIMIT = 55 * DEG;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const $ = (s) => document.querySelector(s);
+
+const L = ['es', 'en', 'de', 'it'];
+const T = {
+  connecting: ['Conectando…', 'Connecting…', 'Verbinde…', 'Connessione…'],
+  linked: ['Conectado', 'Connected', 'Verbunden', 'Connesso'],
+  offline: ['Sin conexión', 'Offline', 'Offline', 'Offline'],
+  east: ['E', 'E', 'O', 'E'], west: ['O', 'W', 'W', 'O'],
+  tConnecting: ['Conectando con el tótem', 'Connecting to the totem', 'Verbindung zum Totem', 'Connessione al totem'],
+  bConnecting: ['Un momento…', 'One moment…', 'Einen Moment…', 'Un attimo…'],
+  tWelcome: ['El tracker es tuyo', 'The tracker is yours', 'Der Tracker gehört dir', 'Il tracker è tuo'],
+  bWelcome: ['<ol><li>Bloquea la rotación de la pantalla.</li><li>Sostén el móvil horizontal, pantalla arriba.</li><li>Inclínalo a izquierda y derecha para seguir al sol en la pantalla grande.</li></ol>', '<ol><li>Lock screen rotation.</li><li>Hold the phone level, screen up.</li><li>Tilt it left and right to follow the sun on the big screen.</li></ol>', '<ol><li>Bildschirmdrehung sperren.</li><li>Handy waagerecht halten, Display oben.</li><li>Nach links und rechts neigen und der Sonne auf dem großen Bildschirm folgen.</li></ol>', '<ol><li>Blocca la rotazione dello schermo.</li><li>Tieni il telefono orizzontale, schermo in alto.</li><li>Inclinalo a sinistra e a destra per seguire il sole sullo schermo grande.</li></ol>'],
+  take: ['Tomar el control', 'Take control', 'Steuerung übernehmen', 'Prendi il controllo'],
+  tCount: ['Sostén el móvil horizontal', 'Hold the phone level', 'Handy waagerecht halten', 'Tieni il telefono orizzontale'],
+  tDone: ['Fin del día', 'Day complete', 'Tag vorbei', 'Giornata finita'],
+  bDone: ['de lo que produjo nuestro tracker. Mira el ranking en la pantalla.', 'of what our tracker produced. See the ranking on the screen.', 'von dem, was unser Tracker erzeugt hat. Rangliste auf dem Bildschirm.', 'di quanto ha prodotto il nostro tracker. Guarda la classifica sullo schermo.'],
+  tBusy: ['Alguien ya está jugando', 'Someone is already playing', 'Jemand spielt bereits', 'Qualcuno sta già giocando'],
+  bBusy: ['Espera tu turno y escanea el código nuevo cuando aparezca en el tótem.', 'Wait for your turn and scan the new code when it appears on the totem.', 'Warte, bis du dran bist, und scanne den neuen Code am Totem.', 'Aspetta il tuo turno e scansiona il nuovo codice sul totem.'],
+  tExpired: ['Este código ya no vale', 'This code has expired', 'Dieser Code ist abgelaufen', 'Questo codice è scaduto'],
+  bExpired: ['El tótem cambia el código cada minuto. Escanea el que ves ahora en la pantalla.', 'The totem changes its code every minute. Scan the one on the screen now.', 'Der Totem wechselt den Code jede Minute. Scanne den aktuellen.', 'Il totem cambia codice ogni minuto. Scansiona quello sullo schermo.'],
+  tLost: ['Se perdió la conexión', 'Connection lost', 'Verbindung verloren', 'Connessione persa'],
+  bLost: ['Revisa tu conexión a internet y escanea de nuevo el código del tótem.', 'Check your internet connection and scan the totem code again.', 'Internetverbindung prüfen und Code erneut scannen.', 'Controlla la connessione e scansiona di nuovo il codice.'],
+  tNoCode: ['Escanea el código del tótem', 'Scan the code on the totem', 'Scanne den Code am Totem', 'Scansiona il codice del totem'],
+  bNoCode: ['Esta página se abre desde el QR de la pantalla del stand.', 'This page opens from the QR code on the booth screen.', 'Diese Seite öffnet sich über den QR-Code am Stand.', 'Questa pagina si apre dal QR sullo schermo dello stand.'],
+  gyroOk: ['✓ Giroscopio activo', '✓ Motion sensor on', '✓ Bewegungssensor aktiv', '✓ Sensore attivo'],
+  gyroNo: ['Sin giroscopio: desliza el dedo a izquierda y derecha.', 'No motion sensor: slide your finger left and right.', 'Kein Sensor: Finger nach links und rechts ziehen.', 'Nessun sensore: trascina il dito.'],
+  insecure: ['El navegador bloquea el giroscopio: abre la página desde el QR, no desde una app.', 'The browser blocks the sensor: open the page from the QR, not inside an app.', 'Der Browser sperrt den Sensor: Seite über den QR öffnen.', 'Il browser blocca il sensore: apri la pagina dal QR.'],
+};
+const li = Math.max(0, L.indexOf((navigator.language || 'es').slice(0, 2).toLowerCase()));
+const t = (k) => T[k][li] ?? T[k][0];
+document.documentElement.lang = L[li];
+document.querySelectorAll('[data-t]').forEach((el) => { el.textContent = t(el.dataset.t); });
+
+// ---- the session from the QR: #s=<session>&k=<key> ----
+const q = new URLSearchParams(location.hash.slice(1) || location.search.slice(1));
+const SID = q.get('s'), KEY = q.get('k');
+const ME = Math.random().toString(36).slice(2, 10);
+const UP = `intersolar27/sunplay/${SID}/up`, DOWN = `intersolar27/sunplay/${SID}/down`;
+
+const G = { phase: 'connecting', angle: 0, target: 0, raw: 0, zero: 0, src: 'none', got: false, k: 0, e: 0, phi: -LIMIT, alt: 0, last: 0, stop: false, tenth: 0 };
+function card(title, body, cta = null, note = '') {
+  $('#card').hidden = false;
+  $('#title').textContent = title; $('#body').innerHTML = body ? (body.startsWith('<') ? body : `<p>${body}</p>`) : '';
+  const b = $('#cta'); b.hidden = !cta; if (cta) b.textContent = cta;
+  $('#note').textContent = note;
+}
+const vibrate = (ms) => { try { navigator.vibrate && navigator.vibrate(ms); } catch (e) { /* no */ } };
+function setLink(state) { const p = $('#link'); p.className = 'pill ' + (state === 'on' ? 'on' : state === 'warn' ? 'warn' : ''); p.textContent = t(state === 'on' ? 'linked' : state === 'warn' ? 'connecting' : 'offline'); }
+
+// ---- the link ----
+let client = null;
+const send = (m) => { if (client && client.connected) client.publish(UP, JSON.stringify({ ...m, id: ME })); };
+function connect() {
+  if (!SID || !KEY) { G.phase = 'nocode'; card(t('tNoCode'), t('bNoCode')); setLink('off'); return; }
+  setLink('warn'); card(t('tConnecting'), t('bConnecting'));
+  client = mqtt.connect(BROKER, { username: 'public', password: 'public', clientId: 'phone-' + ME, reconnectPeriod: 1500, connectTimeout: 8000, keepalive: 20 });
+  client.on('connect', () => {
+    setLink('on');
+    client.subscribe(DOWN, () => send({ t: 'hello', k: KEY }));
+  });
+  client.on('reconnect', () => setLink('warn'));
+  client.on('offline', () => setLink('off'));
+  client.on('message', (_, buf) => { let m; try { m = JSON.parse(buf.toString()); } catch (e) { return; } onMsg(m); });
+  setTimeout(() => { if (G.phase === 'connecting') card(t('tExpired'), t('bExpired')); }, 9000);
+  addEventListener('pagehide', () => send({ t: 'bye' }));
+}
+function onMsg(m) {
+  if (m.to !== ME) return;                         // the totem addresses every message to one phone
+  G.last = performance.now();
+  if (m.t === 'welcome') { G.phase = 'welcome'; card(t('tWelcome'), t('bWelcome'), t('take')); }
+  if (m.t === 'busy') { G.phase = 'busy'; card(t('tBusy'), t('bBusy')); }
+  if (m.t === 'expired') { G.phase = 'expired'; card(t('tExpired'), t('bExpired')); }
+  if (m.t === 'count') {
+    G.phase = 'count';
+    card(t('tCount'), `<div class="big">${m.n}</div>`, null, t(G.src === 'gyro' ? 'gyroOk' : 'gyroNo'));
+    vibrate(20);
+  }
+  if (m.t === 'play') {
+    G.phase = 'play'; $('#card').hidden = true;
+    G.zero = G.src === 'gyro' ? G.raw : 0;       // "level" is however they hold it right now
+    G.target = 0; vibrate(60);
+  }
+  if (m.t === 'tick') {
+    G.k = m.k; G.e = m.e; G.phi = m.phi * DEG; G.alt = m.alt;
+    const tenth = Math.floor(m.e * 10);
+    if (tenth > G.tenth) { G.tenth = tenth; vibrate(12); }
+  }
+  if (m.t === 'done') {
+    G.phase = 'done';
+    card(t('tDone'), `<div class="score">${m.pct}%</div><p>${t('bDone')}</p>`);
+    vibrate([40, 60, 40]);
+  }
+  if (m.t === 'closed') { G.phase = 'expired'; card(t('tExpired'), t('bExpired')); }
+}
+
+// ---- the sensor (same reading as the stand-alone game) ----
+function onTilt(e) {
+  if (e.gamma == null) return;
+  if (!e.motion) G.orient = true; else if (G.orient) return;
+  G.got = true; G.raw = e.gamma;
+}
+async function enableSensor() {
+  try { if (typeof DeviceOrientationEvent !== 'undefined' && DeviceOrientationEvent.requestPermission) await DeviceOrientationEvent.requestPermission(); } catch (e) { /* not iOS */ }
+  try { if (typeof DeviceMotionEvent !== 'undefined' && DeviceMotionEvent.requestPermission) await DeviceMotionEvent.requestPermission(); } catch (e) { /* not iOS */ }
+  addEventListener('deviceorientation', onTilt);
+  addEventListener('devicemotion', (e) => { const a = e.accelerationIncludingGravity; if (!a || a.x == null) return; onTilt({ gamma: Math.atan2(-a.x, Math.hypot(a.y, a.z)) / DEG * (/iPhone|iPad/.test(navigator.userAgent) ? -1 : 1), motion: true }); });
+  await new Promise((r) => setTimeout(r, 1000));
+  G.src = G.got ? 'gyro' : 'touch';
+  return G.got ? t('gyroOk') : (!window.isSecureContext ? t('insecure') : t('gyroNo'));
+}
+$('#cta').addEventListener('click', async () => {
+  if (G.phase !== 'welcome') return;
+  try { screen.orientation && screen.orientation.lock && screen.orientation.lock('portrait').catch(() => {}); } catch (e) { /* optional */ }
+  const note = await enableSensor();
+  $('#cta').hidden = true; $('#note').textContent = note;
+  send({ t: 'ready', src: G.src });
+});
+addEventListener('pointerdown', (e) => touchTo(e.clientX));
+addEventListener('pointermove', (e) => { if (e.buttons || e.pointerType === 'touch') touchTo(e.clientX); });
+function touchTo(x) { if (G.src === 'touch' && G.phase === 'play') G.target = clamp(((x / innerWidth) * 2 - 1) * 1.15, -1, 1) * LIMIT; }
+
+// 20 tilt messages a second while playing
+setInterval(() => {
+  if (G.phase !== 'play') return;
+  if (G.src === 'gyro') G.target = clamp((G.raw - G.zero) * DEG, -LIMIT, LIMIT);
+  send({ t: 'a', a: +(G.target / DEG).toFixed(1) });
+}, 50);
+// a heartbeat while the visitor reads the instructions, so the totem keeps the
+// session for them; silence for 30 s means the page was closed
+setInterval(() => { if (G.phase === 'welcome' || G.phase === 'count') send({ t: 'hb' }); }, 3000);
+// the totem stopped talking mid-game
+setInterval(() => {
+  if ((G.phase === 'play' || G.phase === 'count') && performance.now() - G.last > 6000) { G.phase = 'lost'; card(t('tLost'), t('bLost')); }
+}, 1000);
+
+// ---- the table from above ----
+// A 2P row: two columns of modules in portrait either side of the tube, seen by
+// a camera a few metres overhead. Each corner is projected in perspective, so the
+// side that goes down shrinks and the side that comes up grows: the phone and the
+// picture tilt the same way. Brightness is the alignment the totem reports.
+const cv = $('#c'), g = cv.getContext('2d');
+let W = 0, H = 0;
+function resize() { const d = Math.min(2, devicePixelRatio || 1); W = innerWidth; H = innerHeight; cv.width = W * d; cv.height = H * d; g.setTransform(d, 0, 0, d, 0, 0); }
+addEventListener('resize', resize); resize();
+const MOD = { across: 2.465, along: 1.134, gap: 0.05, mid: 0.08 }, ROWS = 12, CAM = 9;   // metres
+const mixc = (a, b, k) => a.map((v, i) => Math.round(v + (b[i] - v) * k));
+function draw(now) {
+  requestAnimationFrame(draw);
+  const dt = Math.min(0.05, (now - (draw.l || now)) / 1000); draw.l = now;
+  G.angle += (G.target - G.angle) * Math.min(1, dt * 16);
+  const stop = Math.abs(G.angle) > LIMIT - 0.4 * DEG;
+  if (G.phase === 'play' && stop && !G.stop) vibrate(25);
+  G.stop = stop;
+
+  // ground, and a sun-side glow so the visitor knows where the sun is
+  g.fillStyle = '#16210f'; g.fillRect(0, 0, W, H);
+  const gr0 = g.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(W, H) * 0.7);
+  gr0.addColorStop(0, 'rgba(70,104,44,.9)'); gr0.addColorStop(1, 'rgba(20,30,14,1)');
+  g.fillStyle = gr0; g.fillRect(0, 0, W, H);
+  if (G.phase === 'play' && G.alt > 0) {
+    const side = Math.sin(G.phi), warm = G.alt < 15 ? '255,150,70' : '255,236,190';
+    const gs = g.createLinearGradient(side < 0 ? 0 : W, 0, side < 0 ? W * 0.45 : W * 0.55, 0);
+    gs.addColorStop(0, `rgba(${warm},${0.35 * Math.min(1, Math.abs(side) * 1.6)})`); gs.addColorStop(1, `rgba(${warm},0)`);
+    g.fillStyle = gs; g.fillRect(0, 0, W, H);
+  }
+
+  const totalAlong = ROWS * MOD.along + (ROWS - 1) * MOD.gap, chord = 2 * MOD.across + MOD.mid;
+  const sc = Math.min((W - 60) / (chord * 1.1), (H - 170) / (totalAlong * 1.08));
+  const cx = W / 2, cy = H / 2 + 24, ca = Math.cos(G.angle), sa = Math.sin(G.angle);
+  // a point on the table (x across, y along) → screen, with height from the tilt
+  const P = (x, y) => { const z = -x * sa, f = CAM / (CAM - z); return [cx + x * ca * sc * f, cy + y * sc * f]; };
+  // shadow on the grass, cast towards the side away from the sun
+  if (G.alt > 0) {
+    const off = clamp(Math.tan(G.phi) * 2.6, -4, 4) * -sc, hw = chord / 2 * Math.abs(ca) * sc;
+    g.fillStyle = 'rgba(0,0,0,.28)';
+    g.fillRect(cx + off - hw, cy - totalAlong / 2 * sc, hw * 2, totalAlong * sc);
+  }
+  // torque tube
+  const [tx0, ty0] = P(0, -totalAlong / 2 - 0.3), [tx1, ty1] = P(0, totalAlong / 2 + 0.3);
+  g.strokeStyle = '#8d959e'; g.lineWidth = 0.15 * sc; g.beginPath(); g.moveTo(tx0, ty0); g.lineTo(tx1, ty1); g.stroke();
+  // modules
+  const k = G.phase === 'play' ? G.k : 0.6;
+  const face = mixc([16, 32, 70], [52, 96, 178], k), edge = mixc([150, 160, 175], [235, 240, 248], k);
+  for (const side of [-1, 1]) {
+    const x0 = side < 0 ? -chord / 2 : MOD.mid / 2, x1 = side < 0 ? -MOD.mid / 2 : chord / 2;
+    for (let r = 0; r < ROWS; r++) {
+      const y0 = -totalAlong / 2 + r * (MOD.along + MOD.gap), y1 = y0 + MOD.along;
+      const a = P(x0, y0), b = P(x1, y0), c = P(x1, y1), d = P(x0, y1);
+      const grd = g.createLinearGradient(a[0], 0, b[0], 0);
+      const shade = side * sa * 0.18;                                 // the lower side a touch darker
+      grd.addColorStop(0, `rgb(${mixc(face, [0, 0, 0], Math.max(0, shade)).join(',')})`);
+      grd.addColorStop(1, `rgb(${mixc(face, [0, 0, 0], Math.max(0, -shade)).join(',')})`);
+      g.fillStyle = grd; g.beginPath(); g.moveTo(...a); g.lineTo(...b); g.lineTo(...c); g.lineTo(...d); g.closePath(); g.fill();
+      g.strokeStyle = `rgb(${edge.join(',')})`; g.lineWidth = 1; g.stroke();
+      // cell rows
+      g.strokeStyle = 'rgba(190,210,240,.16)'; g.beginPath();
+      for (let i = 1; i < 6; i++) { const u = x0 + (x1 - x0) * i / 6, p0 = P(u, y0), p1 = P(u, y1); g.moveTo(...p0); g.lineTo(...p1); }
+      g.stroke();
+    }
+  }
+  // the glint when it is square to the sun
+  if (G.phase === 'play' && G.k > 0.95 && G.alt > 0) {
+    const gl = (G.k - 0.95) / 0.05, gx = g.createRadialGradient(cx, cy, 0, cx, cy, W * 0.5);
+    gx.addColorStop(0, `rgba(255,255,255,${0.35 * gl})`); gx.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = gx; g.fillRect(0, 0, W, H);
+  }
+  // readouts
+  if (G.phase === 'play') {
+    const al = $('#al');
+    if (G.alt <= 0) { al.textContent = '—'; al.style.color = 'var(--muted)'; }
+    else { al.textContent = Math.round(G.k * 100) + '%'; al.style.color = G.k > 0.9 ? 'var(--good)' : G.k > 0.6 ? 'var(--mid)' : 'var(--bad)'; }
+    $('#charge').style.width = (clamp(G.e, 0, 1) * 100).toFixed(1) + '%';
+  }
+}
+requestAnimationFrame(draw);
+connect();
+window.__ctl = G;
+</script>
+</body>
+</html>
